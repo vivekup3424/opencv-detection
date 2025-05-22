@@ -14,4 +14,4 @@ source venv/bin/activate
 pip3 install opencv-python numpy
 
 ## 5. Run command
-python3 your_script.py --url "rtsp://10.1.4.238:8554/test-bas" --skip-frames 10
+python3 your_script.py --url "rtsp://admin:123456@10.1.4.18:8554/ch01" --skip-frames 10
