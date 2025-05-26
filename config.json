@@ -1,0 +1,10 @@
+[
+  {
+    "camera_id": "workbench",
+    "url": "rtsp://admin:123456@10.1.4.18:8554/ch01"
+  },
+  {
+    "camera_id": "hardware_room",
+    "url": "rtsp://admin:admin@123@10.1.4.4:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif"
+  }
+]
