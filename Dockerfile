@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libglib2.0-0 \
@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y \
     gfortran \
     wget \
     curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g pm2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -36,17 +40,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY src/ ./src/
-COPY main.py .
+COPY config.py .
 
 # Create recordings directory
 RUN mkdir -p recordings
 
-# Expose the API port
-EXPOSE 8083
+# Expose the API and WebSocket ports
+EXPOSE 8083 8084
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8083/status || exit 1
 
-# Default command
-CMD ["python3", "main.py", "--host", "0.0.0.0", "--port", "8083"]
+# Default command (no command-line args needed - uses config.py)
+CMD ["python3", "-m", "src.main"]
