@@ -84,7 +84,7 @@ class ApplicationSettings:
     recording: RecordingConfig
     performance: PerformanceConfig
     log_file: Optional[str] = None
-    log_level: str = 'INFO'
+    log_level: str = 'DEBUG'
     
     @classmethod
     def load_from_env(cls) -> 'ApplicationSettings':

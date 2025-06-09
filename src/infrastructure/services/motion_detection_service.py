@@ -5,11 +5,10 @@ import time
 import numpy as np
 from typing import Tuple, Optional
 
-from src.domain.repositories.motion_detection_repository import IMotionDetectionRepository
 from src.core.config.settings import app_config
 
 
-class MotionDetectionService(IMotionDetectionRepository):
+class MotionDetectionService:
     """OpenCV-based implementation of motion detection."""
     
     def __init__(self, threshold: int = None, min_area: int = None):

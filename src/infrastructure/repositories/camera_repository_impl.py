@@ -2,38 +2,48 @@
 
 from typing import List, Optional, Dict, Any
 import threading
-import time
+import asyncio
 from dataclasses import asdict
 
 from src.domain.entities.camera import Camera
-from src.domain.entities.motion_event import MotionEvent
 from src.domain.repositories.camera_repository import ICameraRepository
 from src.core.errors.exceptions import CameraError, ValidationError
 from src.core.utils.validation import is_valid_camera_id
 from src.core.utils.datetime_utils import utc_now
 
 
-class InMemoryICameraRepository(ICameraRepository):
-    """In-memory implementation of camera repository using clean architecture services."""
+class CameraRepositoryImpl(ICameraRepository):
+    """Complete implementation of camera repository with WebSocket support."""
     
-    def __init__(self, camera_service: ICameraRepository):
+    def __init__(self, camera_service=None, websocket_gateway=None):
+        """Initialize camera repository.
+        
+        Args:
+            camera_service: Optional camera service for actual camera operations
+            websocket_gateway: Optional WebSocket gateway for broadcasting events
+        """
         self._camera_service = camera_service
-        self._motion_events: List[MotionEvent] = []
+        self._websocket_gateway = websocket_gateway
+        self._cameras: Dict[str, Camera] = {}
         self._lock = threading.Lock()
     
     async def add_camera(self, camera: Camera) -> bool:
         """Add a new camera."""
-        if not is_valid_camera_id(camera.camera_id):
-            raise ValidationError(f"Invalid camera ID: {camera.camera_id}")
-        
         try:
-            success, message = self._camera_service.add_camera(
-                camera.camera_id, 
-                camera.rtsp_url
-            )
+            # Store camera in memory
+            with self._lock:
+                self._cameras[camera.camera_id] = camera
             
-            if not success:
-                raise CameraError(f"Failed to add camera: {message}")
+            # Add to camera service if available
+            if self._camera_service and hasattr(self._camera_service, 'add_camera'):
+                result = self._camera_service.add_camera(camera)
+                if hasattr(result, '__iter__') and not isinstance(result, str):
+                    # Result is a tuple (success, message)
+                    success, message = result
+                    if not success:
+                        raise CameraError(f"Failed to add camera: {message}")
+                elif not result:
+                    raise CameraError(f"Failed to add camera {camera.camera_id}")
             
             return True
             
@@ -43,148 +53,72 @@ class InMemoryICameraRepository(ICameraRepository):
     async def remove_camera(self, camera_id: str) -> bool:
         """Remove a camera."""
         try:
-            success, message = self._camera_service.delete_camera(camera_id)
+            # Remove from memory
+            with self._lock:
+                if camera_id in self._cameras:
+                    del self._cameras[camera_id]
             
-            if not success:
-                raise CameraError(f"Failed to remove camera: {message}")
+            # Remove from camera service if available
+            if self._camera_service and hasattr(self._camera_service, 'delete_camera'):
+                result = self._camera_service.delete_camera(camera_id)
+                if hasattr(result, '__iter__') and not isinstance(result, str):
+                    # Result is a tuple (success, message)
+                    success, message = result
+                    if not success:
+                        raise CameraError(f"Failed to remove camera: {message}")
+                elif not result:
+                    raise CameraError(f"Failed to remove camera {camera_id}")
             
             return True
             
         except Exception as e:
             raise CameraError(f"Error removing camera {camera_id}: {str(e)}") from e
     
-    async def get_camera(self, camera_id: str) -> Optional[Camera]:
-        """Get a specific camera."""
-        try:
-            status = self._camera_service.get_camera_status(camera_id)
-            
-            if status is None:
-                return None
-            
-            return Camera(
-                camera_id=status["camera_id"],
-                rtsp_url=status["rtsp_url"],
-                is_active=status["status"] == "running",
-                created_at=utc_now(),  # We don't have the actual creation time
-                last_seen=utc_now() if status["status"] == "running" else None
-            )
-            
-        except Exception as e:
-            raise CameraError(f"Error getting camera {camera_id}: {str(e)}") from e
+    async def delete_camera(self, camera_id: str) -> bool:
+        """Delete a camera (alias for remove_camera to match interface)."""
+        return await self.remove_camera(camera_id)
     
-    async def list_cameras(self) -> List[Camera]:
-        """List all cameras."""
+    async def list_cameras(self, camera_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List all cameras or get specific camera by ID."""
         try:
-            camera_list = self._camera_service.list_cameras()
+            # If camera_id is specified, return specific camera
+            if camera_id:
+                with self._lock:
+                    if camera_id in self._cameras:
+                        camera = self._cameras[camera_id]
+                        return [{
+                            "camera_id": camera.camera_id,
+                            "rtsp_url": camera.rtsp_url
+                        }]
+                return []
             
+            # Get all cameras from memory
             cameras = []
-            for camera_info in camera_list:
-                camera = Camera(
-                    camera_id=camera_info["camera_id"],
-                    rtsp_url=camera_info["rtsp_url"],
-                    is_active=camera_info["status"] == "running",
-                    created_at=utc_now(),  # We don't have the actual creation time
-                    last_seen=utc_now() if camera_info["status"] == "running" else None
-                )
-                cameras.append(camera)
+            with self._lock:
+                for camera in self._cameras.values():
+                    cameras.append({
+                        "camera_id": camera.camera_id,
+                        "rtsp_url": camera.rtsp_url
+                    })
             
             return cameras
             
         except Exception as e:
             raise CameraError(f"Error listing cameras: {str(e)}") from e
     
-    async def update_camera_status(self, camera_id: str, is_active: bool) -> bool:
-        """Update camera status."""
-        try:
-            camera = await self.get_camera(camera_id)
-            if camera is None:
-                return False
-            
-            if is_active and not camera.is_active:
-                # Start camera if it's not running
-                success, _ = self._camera_service.add_camera(camera_id, camera.rtsp_url)
-                return success
-            elif not is_active and camera.is_active:
-                # Stop camera if it's running
-                success, _ = self._camera_service.delete_camera(camera_id)
-                return success
-            
-            return True  # No change needed
-            
-        except Exception as e:
-            raise CameraError(f"Error updating camera status {camera_id}: {str(e)}") from e
-    
     async def get_camera_status(self, camera_id: str) -> Optional[Dict[str, Any]]:
-        """Get detailed camera status."""
+        """Get camera information."""
         try:
-            status = self._camera_service.get_camera_status(camera_id)
-            
-            if status is None:
-                return None
-            
-            return {
-                "camera_id": status["camera_id"],
-                "rtsp_url": status["rtsp_url"],
-                "is_active": status["status"] == "running",
-                "uptime_seconds": status["uptime_seconds"],
-                "status": status["status"]
-            }
-            
-        except Exception as e:
-            raise CameraError(f"Error getting camera status {camera_id}: {str(e)}") from e
-    
-    async def record_motion_event(self, motion_event: MotionEvent) -> bool:
-        """Record a motion detection event."""
-        try:
+            # Check memory
             with self._lock:
-                self._motion_events.append(motion_event)
-                
-                # Keep only last 1000 events to prevent memory issues
-                if len(self._motion_events) > 1000:
-                    self._motion_events = self._motion_events[-1000:]
+                if camera_id in self._cameras:
+                    camera = self._cameras[camera_id]
+                    return {
+                        "camera_id": camera.camera_id,
+                        "rtsp_url": camera.rtsp_url
+                    }
             
-            return True
-            
-        except Exception as e:
-            raise CameraError(f"Error recording motion event: {str(e)}") from e
-    
-    async def get_motion_events(self, camera_id: str, limit: int = 100) -> List[MotionEvent]:
-        """Get recent motion events for a camera."""
-        try:
-            with self._lock:
-                # Filter events for the specific camera and apply limit
-                camera_events = [
-                    event for event in self._motion_events 
-                    if event.camera_id == camera_id
-                ]
-                
-                # Sort by timestamp (newest first) and apply limit
-                camera_events.sort(key=lambda x: x.timestamp, reverse=True)
-                return camera_events[:limit]
-                
-        except Exception as e:
-            raise CameraError(f"Error getting motion events for {camera_id}: {str(e)}") from e
-    
-    async def get_all_motion_events(self, limit: int = 100) -> List[MotionEvent]:
-        """Get recent motion events from all cameras."""
-        try:
-            with self._lock:
-                # Sort by timestamp (newest first) and apply limit
-                sorted_events = sorted(
-                    self._motion_events, 
-                    key=lambda x: x.timestamp, 
-                    reverse=True
-                )
-                return sorted_events[:limit]
-                
-        except Exception as e:
-            raise CameraError(f"Error getting all motion events: {str(e)}") from e
-    
-    async def stop_all_cameras(self) -> bool:
-        """Stop all cameras."""
-        try:
-            self._camera_service.stop_all_cameras()
-            return True
+            return None
             
         except Exception as e:
-            raise CameraError(f"Error stopping all cameras: {str(e)}") from e
+            raise CameraError(f"Error getting camera {camera_id}: {str(e)}") from e

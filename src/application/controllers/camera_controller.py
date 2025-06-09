@@ -3,7 +3,8 @@
 import json
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+import asyncio
 
 from src.domain.entities.camera import Camera
 from src.domain.usecases.camera_management import CameraManagementUseCase
@@ -21,10 +22,6 @@ class CameraController(BaseHTTPRequestHandler):
         self.camera_management_usecase = camera_management_usecase
         self.camera_status_usecase = camera_status_usecase
         super().__init__(request, client_address, server)
-    
-    def log_message(self, format, *args):
-        """Override to reduce verbose logging."""
-        pass  # Comment this line if you want to see HTTP logs
     
     def do_OPTIONS(self):
         """Handle CORS preflight requests."""
@@ -112,25 +109,18 @@ class CameraController(BaseHTTPRequestHandler):
                 self.send_error_response(400, "Invalid camera ID format")
                 return
             
-            # Create camera entity
-            camera = Camera(
-                camera_id=camera_id,
-                rtsp_url=rtsp_url,
-                is_active=True
-            )
+            # Call the use case with the extracted parameters
+            success, message = asyncio.run(self.camera_management_usecase.add_camera(camera_id, rtsp_url))
+            print("result", success, message)
             
-            # Execute use case
-            import asyncio
-            result = asyncio.run(self.camera_management_usecase.add_camera(camera))
-            
-            if result:
+            if success:
                 self.send_json_response(200, {
                     "success": True,
-                    "message": f"Camera {camera_id} added successfully",
+                    "message": message,
                     "camera_id": camera_id
                 })
             else:
-                self.send_error_response(400, f"Failed to add camera {camera_id}")
+                self.send_error_response(400, message)
                 
         except json.JSONDecodeError:
             self.send_error_response(400, "Invalid JSON format")
@@ -151,18 +141,16 @@ class CameraController(BaseHTTPRequestHandler):
                 self.send_error_response(400, "Missing required parameter: camera_id")
                 return
             
-            # Execute use case
-            import asyncio
-            result = asyncio.run(self.camera_management_usecase.delete_camera(camera_id))
+            success, message = asyncio.run(self.camera_management_usecase.delete_camera(camera_id))
             
-            if result:
+            if success:
                 self.send_json_response(200, {
                     "success": True,
-                    "message": f"Camera {camera_id} deleted successfully",
+                    "message": message,
                     "camera_id": camera_id
                 })
             else:
-                self.send_error_response(404, f"Camera {camera_id} not found")
+                self.send_error_response(404, message)
                 
         except CameraError as e:
             self.send_error_response(400, str(e))
@@ -170,17 +158,12 @@ class CameraController(BaseHTTPRequestHandler):
     def _handle_status(self):
         """Handle general status requests."""
         try:
-            # Execute use case
-            import asyncio
             cameras = asyncio.run(self.camera_status_usecase.list_all_cameras())
             
             camera_list = [
                 {
-                    "camera_id": camera.camera_id,
-                    "rtsp_url": camera.rtsp_url,
-                    "is_active": camera.is_active,
-                    "last_seen": camera.last_seen.isoformat() if camera.last_seen else None,
-                    "created_at": camera.created_at.isoformat()
+                    "camera_id": camera["camera_id"],
+                    "rtsp_url": camera["rtsp_url"],
                 }
                 for camera in cameras
             ]
@@ -188,7 +171,7 @@ class CameraController(BaseHTTPRequestHandler):
             self.send_json_response(200, {
                 "success": True,
                 "api_status": "running",
-                "active_cameras": len([c for c in cameras if c.is_active]),
+                "active_cameras": len([c for c in cameras if c.get("is_active", True)]),
                 "total_cameras": len(cameras),
                 "cameras": camera_list
             })
@@ -209,8 +192,6 @@ class CameraController(BaseHTTPRequestHandler):
             
             camera_id = path_parts[1]
             
-            # Execute use case
-            import asyncio
             status = asyncio.run(self.camera_status_usecase.get_camera_status(camera_id))
             
             if status:

@@ -9,7 +9,7 @@ import os
 import logging
 from http.server import HTTPServer
 
-from .di import initialize_container, get_container
+from .di import initialize_container
 from .core.config.settings import get_settings
 from .core.errors.exceptions import ApplicationStartupError
 
@@ -98,7 +98,6 @@ def run_motion_detection_server():
         print(f"  POST   http://{settings.http.host}:{settings.http.port}/addCamera")
         print(f"  DELETE http://{settings.http.host}:{settings.http.port}/deleteCamera?camera_id=ID")
         print(f"  GET    http://{settings.http.host}:{settings.http.port}/status")
-        print(f"  GET    http://{settings.http.host}:{settings.http.port}/camera/{{camera_id}}")
         print(f"WebSocket server available at ws://{settings.websocket.host}:{settings.websocket.port}")
         print("\nPress Ctrl+C to stop the server")
         

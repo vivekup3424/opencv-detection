@@ -3,15 +3,14 @@
 import cv2
 import time
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from pathlib import Path
 
+from src.domain.entities.camera import Camera
 from src.domain.repositories.camera_repository import ICameraRepository
-from src.domain.repositories.motion_detection_repository import IMotionDetectionRepository
 from src.domain.repositories.video_recording_repository import IVideoRecordingRepository
 from src.core.config.settings import app_config
 from src.core.utils.file_utils import ensure_directory_exists
-from src.core.utils.datetime_utils import utc_now
 
 
 class CameraWorker:
@@ -20,7 +19,7 @@ class CameraWorker:
     def __init__(self, 
                  camera_id: str, 
                  rtsp_url: str,
-                 motion_detection_service: IMotionDetectionRepository,
+                 motion_detection_service,
                  video_recording_service: IVideoRecordingRepository):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
@@ -32,12 +31,9 @@ class CameraWorker:
         self.motion_detected = False
         self.last_motion_time = 0
         self.motion_start_time = 0
-        self.chunk_start_time = 0
-        self.chunk_counter = 0
         
         # Configuration
         self.post_buffer_seconds = app_config.motion_detection.post_buffer_seconds
-        self.chunk_duration_seconds = app_config.recording.chunk_duration_seconds
         
         # Recording directory
         self.recording_dir = Path(app_config.recording.recordings_dir) / camera_id
@@ -50,9 +46,10 @@ class CameraWorker:
         # Cleanup old recordings
         self.video_recording_service.cleanup_old_recordings(self.camera_id)
         
-        # Initialize capture
+        # Initialize capture with better settings for concurrent access
         cap = cv2.VideoCapture(self.rtsp_url)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, app_config.performance.buffer_size)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer to reduce conflicts
+        cap.set(cv2.CAP_PROP_FPS, 10)  # Lower FPS for motion detection
         time.sleep(2)
         
         if not cap.isOpened():
@@ -90,6 +87,7 @@ class CameraWorker:
     
     def _main_loop(self, cap, stop_event):
         """Main processing loop."""
+        
         while True:
             if stop_event and stop_event.is_set():
                 print(f"{self.thread_name} Stopping camera thread...")
@@ -97,13 +95,14 @@ class CameraWorker:
             
             ret, frame = cap.read()
             if not ret:
-                break
+                print(f"{self.thread_name} Failed to read frame, retrying...")
+                time.sleep(0.5)  # Wait before retry to avoid tight loop
+                continue
             
-            # Check if recording process is still running
+            # Check if recording process ended unexpectedly during motion
             if (self.motion_detected and 
-                self.video_recording_service.is_recording(self.camera_id)):
-                if not self.video_recording_service.is_recording(self.camera_id):
-                    print(f"{self.thread_name} Recording process ended unexpectedly")
+                not self.video_recording_service.is_recording(self.camera_id)):
+                print(f"{self.thread_name} Recording process ended unexpectedly")
             
             # Motion detection
             motion_this_frame, _ = self.motion_detection_service.detect_motion(frame)
@@ -132,11 +131,7 @@ class CameraWorker:
             else:
                 # Motion continues - update last motion time
                 self.last_motion_time = current_time
-                
-                # Check if current chunk has reached duration limit
-                if (self.video_recording_service.is_recording(self.camera_id) and 
-                    current_time - self.chunk_start_time >= self.chunk_duration_seconds):
-                    self._start_new_chunk()
+                # Note: Chunking is now handled automatically by FFmpeg segmentation
         else:
             # Check if motion has stopped for post_buffer_seconds
             if (self.motion_detected and 
@@ -147,29 +142,14 @@ class CameraWorker:
         """Start recording when motion is detected."""
         self.motion_detected = True
         current_time = time.time()
-        self.motion_start_time = self.last_motion_time = self.chunk_start_time = current_time
-        self.chunk_counter = 1
+        self.motion_start_time = self.last_motion_time = current_time
         
         print(f"{self.thread_name} Motion detected. Starting recording...")
         
-        # Start recording
+        # Start recording (FFmpeg will handle chunking automatically)
         success = self.video_recording_service.start_recording(self.camera_id, self.rtsp_url)
         if not success:
             print(f"{self.thread_name} Failed to start recording")
-    
-    def _start_new_chunk(self):
-        """Start a new recording chunk."""
-        print(f"{self.thread_name} Chunk {self.chunk_counter} duration reached. Starting new chunk...")
-        
-        # Stop current recording
-        self.video_recording_service.stop_recording(self.camera_id)
-        
-        # Start new chunk
-        self.chunk_counter += 1
-        self.chunk_start_time = time.time()
-        
-        print(f"{self.thread_name} Recording chunk {self.chunk_counter}")
-        self.video_recording_service.start_recording(self.camera_id, self.rtsp_url)
     
     def _stop_motion_recording(self):
         """Stop recording when motion ends."""
@@ -189,19 +169,22 @@ class CameraWorker:
         print(f"{self.thread_name} Camera worker stopped")
 
 
-class CameraService(ICameraServiceRepository):
+class CameraService(ICameraRepository):
     """Thread-safe camera management service."""
     
     def __init__(self, 
-                 motion_detection_service: IMotionDetectionRepository,
+                 motion_detection_service,
                  video_recording_service: IVideoRecordingRepository):
         self.motion_detection_service = motion_detection_service
         self.video_recording_service = video_recording_service
         self.cameras = {}  # camera_id -> {"worker": worker, "thread": thread, "stop_event": stop_event}
         self.lock = threading.Lock()
     
-    def add_camera(self, camera_id: str, rtsp_url: str) -> Tuple[bool, str]:
+    def add_camera(self, camera: Camera) -> Tuple[bool, str]:
         """Add and start monitoring a camera."""
+        camera_id = camera.camera_id
+        rtsp_url = camera.rtsp_url
+        
         with self.lock:
             if camera_id in self.cameras:
                 return False, f"Camera {camera_id} already exists"
@@ -277,23 +260,24 @@ class CameraService(ICameraServiceRepository):
                 "is_recording": self.video_recording_service.is_recording(camera_id)
             }
     
-    def list_cameras(self) -> List[Dict]:
+    def list_cameras(self, camera_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """List all cameras with their status."""
         with self.lock:
-            return [self.get_camera_status(camera_id) 
-                    for camera_id in self.cameras.keys()]
+            if camera_id is not None:
+                # Return specific camera status if camera_id provided
+                status = self.get_camera_status(camera_id)
+                return [status] if status is not None else []
+            else:
+                # Return all cameras
+                return [self.get_camera_status(cam_id) 
+                        for cam_id in self.cameras.keys()]
     
-    def stop_all_cameras(self) -> int:
-        """Stop all cameras. Returns number of cameras stopped."""
+    def stop_all_cameras(self) -> None:
+        """Stop all cameras."""
         camera_ids = list(self.cameras.keys())
-        stopped_count = 0
         
         for camera_id in camera_ids:
             success, _ = self.stop_camera(camera_id)
-            if success:
-                stopped_count += 1
-        
-        return stopped_count
     
     def is_camera_active(self, camera_id: str) -> bool:
         """Check if a camera is currently active."""

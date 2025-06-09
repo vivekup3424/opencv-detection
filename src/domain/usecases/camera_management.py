@@ -38,8 +38,7 @@ class CameraManagementUseCase:
         # Create camera entity
         camera = Camera(
             camera_id=camera_id.strip(),
-            rtsp_url=rtsp_url.strip(),
-            is_active=False  # Will be activated when added to repository
+            rtsp_url=rtsp_url.strip()
         )
         
         try:

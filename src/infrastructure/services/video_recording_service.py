@@ -22,21 +22,22 @@ class VideoRecordingService(IVideoRecordingRepository):
         self._lock = threading.Lock()
     
     def start_recording(self, camera_id: str, rtsp_url: str) -> bool:
-        """Start recording for the specified camera."""
+        """Start recording for the specified camera with automatic chunking."""
         with self._lock:
             if camera_id in self._recording_processes:
                 return False  # Already recording
             
             try:
-                # Generate output filename
+                # Generate output filename pattern for segments
                 timestamp = utc_now().strftime("%H%M%S")
                 date_str = utc_now().strftime("%Y-%m-%d")
                 recordings_dir = Path(app_config.recording.recordings_dir) / camera_id / date_str
                 ensure_directory_exists(str(recordings_dir))
                 
-                output_file = recordings_dir / f"motion_{timestamp}_chunk001.mp4"
+                # Use FFmpeg segment muxer for automatic chunking
+                output_pattern = recordings_dir / f"motion_{timestamp}_chunk%03d.mp4"
                 
-                # Build FFmpeg command
+                # Build FFmpeg command with segmentation
                 ffmpeg_cmd = [
                     'ffmpeg',
                     '-y',  # Overwrite output file
@@ -53,12 +54,24 @@ class VideoRecordingService(IVideoRecordingRepository):
                     '-movflags', '+faststart',  # Move metadata to beginning for web compatibility
                     '-avoid_negative_ts', 'make_zero',  # Handle timestamp issues
                     '-threads', str(app_config.recording.ffmpeg_threads),
-                    str(output_file)
+                    # Segmentation options
+                    '-f', 'segment',  # Use segment muxer
+                    '-segment_time', str(app_config.recording.chunk_duration_seconds),  # Chunk duration
+                    '-segment_format', 'mp4',  # Output format for segments
+                    '-reset_timestamps', '1',  # Reset timestamps for each segment
+                    '-segment_start_number', '1',  # Start numbering from 1
+                    str(output_pattern)
                 ]
                 
-                process = subprocess.Popen(ffmpeg_cmd, stderr=subprocess.PIPE)
+                # Start process with better error handling
+                process = subprocess.Popen(
+                    ffmpeg_cmd, 
+                    stderr=subprocess.PIPE, 
+                    stdout=subprocess.PIPE,
+                    universal_newlines=True
+                )
                 self._recording_processes[camera_id] = process
-                self._current_files[camera_id] = str(output_file)
+                self._current_files[camera_id] = str(output_pattern)
                 
                 return True
                 
@@ -116,8 +129,16 @@ class VideoRecordingService(IVideoRecordingRepository):
             days = app_config.recording.cleanup_days
         
         try:
-            from src.utils import cleanup_old_recordings
-            return cleanup_old_recordings(camera_id, days)
+            from src.core.utils.file_utils import cleanup_old_files
+            from pathlib import Path
+            
+            # Get the recordings directory for this camera
+            recordings_dir = Path(app_config.recording.recordings_dir) / camera_id
+            
+            if recordings_dir.exists():
+                # Clean up old video files (mp4)
+                return cleanup_old_files(recordings_dir, days, "*.mp4")
+            return 0
         except Exception as e:
             print(f"Error cleaning up recordings for {camera_id}: {e}")
             return 0

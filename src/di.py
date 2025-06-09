@@ -6,7 +6,10 @@ import logging
 from .core.config.settings import app_config
 from .core.startup import ApplicationBootstrap, initialize_application
 from .domain.repositories.camera_repository import ICameraRepository
-from .infrastructure.repositories.camera_repository_impl import InMemoryICameraRepository
+from .infrastructure.repositories.camera_repository_impl import CameraRepositoryImpl
+from .infrastructure.services.camera_service import CameraService
+from .infrastructure.services.motion_detection_service import MotionDetectionService
+from .infrastructure.services.video_recording_service import VideoRecordingService
 from .domain.usecases.camera_management import CameraManagementUseCase
 from .domain.usecases.camera_status import CameraStatusUseCase
 from .domain.usecases.broadcast_motion_event import BroadcastMotionEventUseCase
@@ -21,21 +24,23 @@ class ServiceContainer:
         self._services: Dict[str, Any] = {}
         self._logger = logging.getLogger(__name__)
     
-    def register(self, service_type: type, instance: Any) -> None:
+    def register(self, service_type, instance: Any) -> None:
         """Register a service instance."""
-        self._services[service_type.__name__] = instance
-        self._logger.debug(f"Registered service: {service_type.__name__}")
+        service_name = service_type.__name__ if hasattr(service_type, '__name__') else str(service_type)
+        self._services[service_name] = instance
+        self._logger.debug(f"Registered service: {service_name}")
     
-    def get(self, service_type: type) -> Any:
+    def get(self, service_type) -> Any:
         """Get a service instance."""
-        service_name = service_type.__name__
+        service_name = service_type.__name__ if hasattr(service_type, '__name__') else str(service_type)
         if service_name not in self._services:
             raise ValueError(f"Service {service_name} not registered")
         return self._services[service_name]
     
-    def has(self, service_type: type) -> bool:
+    def has(self, service_type) -> bool:
         """Check if service is registered."""
-        return service_type.__name__ in self._services
+        service_name = service_type.__name__ if hasattr(service_type, '__name__') else str(service_type)
+        return service_name in self._services
 
 
 class ApplicationContainer:
@@ -57,21 +62,27 @@ class ApplicationContainer:
         # Register core services
         self.container.register(ApplicationBootstrap, self.bootstrap)
         
+        # Create infrastructure services
+        motion_detection_service = MotionDetectionService()
+        video_recording_service = VideoRecordingService()
+        camera_service = CameraService(motion_detection_service, video_recording_service)
+        
+        websocket_gateway = WebSocketGateway(app_config.websocket)
+        
         # Register infrastructure services
-        camera_repository = InMemoryICameraRepository(websocket_server)
+        camera_repository = CameraRepositoryImpl(camera_service=camera_service, websocket_gateway=websocket_gateway)
         self.container.register(ICameraRepository, camera_repository)
         
         # Register use cases
         camera_mgmt_usecase = CameraManagementUseCase(camera_repository)
         camera_status_usecase = CameraStatusUseCase(camera_repository)
-        broadcast_usecase = BroadcastMotionEventUseCase(camera_repository)
+        broadcast_usecase = BroadcastMotionEventUseCase(websocket_gateway)
         
         self.container.register(CameraManagementUseCase, camera_mgmt_usecase)
         self.container.register(CameraStatusUseCase, camera_status_usecase)
         self.container.register(BroadcastMotionEventUseCase, broadcast_usecase)
         
-        # Register application services
-        websocket_gateway = WebSocketGateway(broadcast_usecase)
+        # Register application services with proper dependencies
         self.container.register(WebSocketGateway, websocket_gateway)
         
         # Register camera controller class factory
