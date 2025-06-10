@@ -43,16 +43,3 @@ class IVideoRecordingRepository(ABC):
             bool: True if recording is active, False otherwise
         """
         pass
-    
-    @abstractmethod
-    def cleanup_old_recordings(self, camera_id: str, days: int = None) -> int:
-        """Clean up old recordings for the camera.
-        
-        Args:
-            camera_id: Unique identifier for the camera
-            days: Number of days to keep recordings (optional)
-            
-        Returns:
-            int: Number of files deleted
-        """
-        pass

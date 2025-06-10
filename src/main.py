@@ -51,6 +51,13 @@ def signal_handler(signum, frame):
         # Shutdown dependency container (which stops all services)
         if container:
             print("Stopping all services...")
+            # Stop cleanup service first
+            try:
+                cleanup_service = container.get_cleanup_service()
+                cleanup_service.stop()
+            except Exception as e:
+                print(f"Error stopping cleanup service: {e}")
+            
             container.shutdown()
         
         # Close HTTP server
@@ -87,6 +94,11 @@ def run_motion_detection_server():
         print("Starting WebSocket gateway...")
         websocket_gateway = container.get_websocket_gateway()
         websocket_gateway.start_in_thread()
+        
+        # Start cleanup service
+        print("Starting cleanup service...")
+        cleanup_service = container.get_cleanup_service()
+        cleanup_service.start()
         
         # Create HTTP server with clean architecture controller
         print("Starting HTTP API server...")

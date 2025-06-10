@@ -10,6 +10,7 @@ from .infrastructure.repositories.camera_repository_impl import CameraRepository
 from .infrastructure.services.camera_service import CameraService
 from .infrastructure.services.motion_detection_service import MotionDetectionService
 from .infrastructure.services.video_recording_service import VideoRecordingService
+from .infrastructure.services.cleanup_service import CleanupService
 from .domain.usecases.camera_management import CameraManagementUseCase
 from .domain.usecases.camera_status import CameraStatusUseCase
 from .domain.usecases.broadcast_motion_event import BroadcastMotionEventUseCase
@@ -66,10 +67,12 @@ class ApplicationContainer:
         motion_detection_service = MotionDetectionService()
         video_recording_service = VideoRecordingService()
         camera_service = CameraService(motion_detection_service, video_recording_service)
+        cleanup_service = CleanupService()
         
         websocket_gateway = WebSocketGateway(app_config.websocket)
         
         # Register infrastructure services
+        self.container.register(CleanupService, cleanup_service)
         camera_repository = CameraRepositoryImpl(camera_service=camera_service, websocket_gateway=websocket_gateway)
         self.container.register(ICameraRepository, camera_repository)
         
@@ -120,8 +123,17 @@ class ApplicationContainer:
         """Get camera controller class factory."""
         return self.container.get('CameraControllerFactory')
     
+    def get_cleanup_service(self) -> CleanupService:
+        """Get cleanup service instance."""
+        return self.container.get(CleanupService)
+    
     def shutdown(self) -> None:
         """Clean shutdown of all services."""
+        # Stop cleanup service first
+        if self.container.has(CleanupService):
+            cleanup_service = self.container.get(CleanupService)
+            cleanup_service.stop()
+            
         if self.bootstrap:
             self.bootstrap.shutdown()
 

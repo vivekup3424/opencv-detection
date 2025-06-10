@@ -4,7 +4,6 @@ import cv2
 import time
 import threading
 from typing import Dict, List, Optional, Tuple, Any
-from pathlib import Path
 
 from src.domain.entities.camera import Camera
 from src.domain.repositories.camera_repository import ICameraRepository
@@ -43,14 +42,8 @@ class CameraWorker:
         """Main worker loop."""
         print(f"{self.thread_name} Starting camera worker...")
         
-        # Cleanup old recordings
-        self.video_recording_service.cleanup_old_recordings(self.camera_id)
-        
-        # Initialize capture with better settings for concurrent access
         cap = cv2.VideoCapture(self.rtsp_url)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer to reduce conflicts
-        cap.set(cv2.CAP_PROP_FPS, 10)  # Lower FPS for motion detection
-        time.sleep(2)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
         if not cap.isOpened():
             print(f"{self.thread_name} Error: Could not open RTSP stream")
@@ -87,6 +80,8 @@ class CameraWorker:
     
     def _main_loop(self, cap, stop_event):
         """Main processing loop."""
+        consecutive_failures = 0
+        max_failures = 5
         
         while True:
             if stop_event and stop_event.is_set():
@@ -95,14 +90,18 @@ class CameraWorker:
             
             ret, frame = cap.read()
             if not ret:
-                print(f"{self.thread_name} Failed to read frame, retrying...")
-                time.sleep(0.5)  # Wait before retry to avoid tight loop
+                consecutive_failures += 1
+                print(f"{self.thread_name} Failed to read frame ({consecutive_failures}/{max_failures})")
+                
+                if consecutive_failures >= max_failures:
+                    print(f"{self.thread_name} Too many frame failures. Worker will restart.")
+                    break  # Exit and let the worker restart
+                
+                time.sleep(1)
                 continue
             
-            # Check if recording process ended unexpectedly during motion
-            if (self.motion_detected and 
-                not self.video_recording_service.is_recording(self.camera_id)):
-                print(f"{self.thread_name} Recording process ended unexpectedly")
+            # Reset failure counter on successful read
+            consecutive_failures = 0
             
             # Motion detection
             motion_this_frame, _ = self.motion_detection_service.detect_motion(frame)
@@ -110,15 +109,8 @@ class CameraWorker:
             if not self.motion_detection_service.should_skip_frame():
                 self._handle_motion_detection(motion_this_frame)
             
-            # Adaptive sleep
-            sleep_duration = self.motion_detection_service.get_adaptive_sleep_time(self.motion_detected)
-            time.sleep(sleep_duration)
-            
-            # Print performance stats periodically
-            if self.motion_detection_service.should_print_stats():
-                stats = self.motion_detection_service.get_statistics()
-                print(f"{self.thread_name} Performance: {stats['fps_actual']:.1f} FPS total, "
-                      f"{stats['detection_fps']:.1f} detection FPS")
+            # Fixed sleep instead of adaptive
+            time.sleep(0.05)
     
     def _handle_motion_detection(self, motion_this_frame: bool):
         """Handle motion detection logic."""
@@ -199,8 +191,8 @@ class CameraService(ICameraRepository):
                 )
                 
                 thread = threading.Thread(
-                    target=worker.run,
-                    args=(stop_event,),
+                    target=self._run_worker_with_restart,
+                    args=(worker, stop_event),
                     name=f"Camera-{camera_id}",
                     daemon=True
                 )
@@ -218,6 +210,20 @@ class CameraService(ICameraRepository):
                 
             except Exception as e:
                 return False, f"Failed to start camera {camera_id}: {str(e)}"
+    
+    def _run_worker_with_restart(self, worker, stop_event):
+        """Run worker with automatic restart on failure."""
+        while not stop_event.is_set():
+            try:
+                print(f"{worker.thread_name} Starting worker...")
+                worker.run(stop_event)
+                if not stop_event.is_set():
+                    print(f"{worker.thread_name} Worker crashed, restarting in 5 seconds...")
+                    time.sleep(5)
+            except Exception as e:
+                if not stop_event.is_set():
+                    print(f"{worker.thread_name} Worker error: {e}, restarting in 5 seconds...")
+                    time.sleep(5)
     
     def delete_camera(self, camera_id: str) -> Tuple[bool, str]:
         """Stop and remove a camera."""
