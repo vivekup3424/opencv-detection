@@ -16,7 +16,7 @@ from .motion_detector import MotionDetector
 from .video_recorder import VideoRecorder
 from .websocket_server import MotionDetectionWebSocketServer
 from .api_handler import MotionAPIHandler, create_handler_class
-from .utils import cleanup_old_recordings, create_recording_directory, generate_chunk_filename
+from .utils import cleanup_old_recordings, create_recording_directory
 from . import config
 
 __all__ = [
@@ -31,6 +31,5 @@ __all__ = [
     'create_handler_class',
     'cleanup_old_recordings',
     'create_recording_directory',
-    'generate_chunk_filename',
     'config'
 ]

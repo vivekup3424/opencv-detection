@@ -8,7 +8,7 @@ import time
 import threading
 from motion_detector import MotionDetector
 from video_recorder import VideoRecorder
-from utils import cleanup_old_recordings, create_recording_directory, generate_chunk_filename
+from utils import cleanup_old_recordings, create_recording_directory
 from config import (
     DEFAULT_THRESHOLD, DEFAULT_MIN_AREA, SKIP_FRAMES, DEFAULT_POST_BUFFER_SECONDS,
     BUFFER_SIZE, MAX_INIT_FRAMES, INIT_FRAME_WAIT, DEFAULT_FPS, CHUNK_DURATION_SECONDS
@@ -38,7 +38,6 @@ class CameraWorker:
         self.motion_start_time = None
         self.last_motion_time = None
         self.chunk_start_time = None
-        self.chunk_counter = 0
         self.current_chunk_filename = None
         self.recording_dir = None
     
@@ -133,10 +132,10 @@ class CameraWorker:
                 # Motion continues - update last motion time
                 self.last_motion_time = current_time
                 
-                # Check if current chunk has reached duration limit
+                # Check if current recording has reached duration limit
                 if (self.video_recorder.is_recording() and 
                     current_time - self.chunk_start_time >= CHUNK_DURATION_SECONDS):
-                    self._start_new_chunk()
+                    self._stop_current_recording_and_start_new()
         else:
             # Check if motion has stopped for post_buffer_seconds
             if (self.motion_detected and 
@@ -148,14 +147,12 @@ class CameraWorker:
         self.motion_detected = True
         current_time = time.time()
         self.motion_start_time = self.last_motion_time = self.chunk_start_time = current_time
-        self.chunk_counter = 1
         
-        self.current_chunk_filename = generate_chunk_filename(
-            self.recording_dir, self.camera_id, self.chunk_counter
-        )
+        # Generate video filename: camera_id_timestamp.mp4
+        timestamp = int(current_time * 1000)  # epoch in milliseconds
+        self.current_chunk_filename = self.recording_dir / f"{self.camera_id}_{timestamp}.mp4"
         
-        print(f"{self.thread_name} Motion detected. Recording chunk {self.chunk_counter}: "
-              f"{self.current_chunk_filename}")
+        print(f"{self.thread_name} Motion detected. Recording: {self.current_chunk_filename}")
         
         # Start ffmpeg recording
         self.video_recorder.start_recording(self.current_chunk_filename, self.rtsp_url)
@@ -163,50 +160,48 @@ class CameraWorker:
         # Send WebSocket event for motion start
         if self.websocket_server:
             absolute_path = str(self.current_chunk_filename.absolute())
-            self.websocket_server.handle_motion_detection_event(
-                self.camera_id, absolute_path, True
-            )
+            self._emit_video_motion_event("start", absolute_path, timestamp)
     
-    def _start_new_chunk(self):
-        """Start a new recording chunk"""
-        print(f"{self.thread_name} Chunk {self.chunk_counter} duration reached. Starting new chunk...")
+    def _stop_current_recording_and_start_new(self):
+        """Stop current recording when duration limit is reached and start new recording"""
+        print(f"{self.thread_name} Recording duration reached. Stopping current recording and starting new one...")
         
-        # Close current recording
+        # Get end time for current recording
+        end_time = int(time.time() * 1000)  # epoch in milliseconds
+        current_file_path = str(self.current_chunk_filename.absolute()) if self.current_chunk_filename else None
+        
+        # Stop current recording
         self.video_recorder.stop_recording()
         
-        # Start new chunk
-        self.chunk_counter += 1
-        self.chunk_start_time = time.time()
-        self.current_chunk_filename = generate_chunk_filename(
-            self.recording_dir, self.camera_id, self.chunk_counter
-        )
+        # Send stop event for current recording
+        if self.websocket_server and current_file_path:
+            # Extract start time from filename
+            start_time = int(self.chunk_start_time * 1000)  # epoch in milliseconds
+            self._emit_video_motion_event("stop", current_file_path, start_time, end_time)
         
-        print(f"{self.thread_name} Recording chunk {self.chunk_counter}: {self.current_chunk_filename}")
-        self.video_recorder.start_recording(self.current_chunk_filename, self.rtsp_url)
+        # Start new recording immediately (motion is still ongoing)
+        self._start_motion_recording()
     
     def _stop_motion_recording(self):
         """Stop recording when motion ends"""
         print(f"{self.thread_name} Motion stopped. Stopping recording after "
               f"{self.post_buffer_seconds}s post-buffer...")
         
+        # Get end time and file path
+        end_time = int(time.time() * 1000)  # epoch in milliseconds
+        current_file_path = str(self.current_chunk_filename.absolute()) if self.current_chunk_filename else None
+        
         # Stop recording
         self.motion_detected = False
         self.video_recorder.stop_recording()
         
         # Send motion end event to WebSocket clients
-        if self.websocket_server:
-            try:
-                absolute_path = str(self.current_chunk_filename.absolute()) if self.current_chunk_filename else None
-                self.websocket_server.handle_motion_detection_event(
-                    self.camera_id, absolute_path, False
-                )
-            except Exception as e:
-                print(f"Error sending WebSocket motion end event: {e}")
+        if self.websocket_server and current_file_path:
+            start_time = int(self.chunk_start_time * 1000)  # epoch in milliseconds
+            self._emit_video_motion_event("stop", current_file_path, start_time, end_time)
         
-        total_chunks = self.chunk_counter
         self.chunk_start_time = None
-        self.chunk_counter = 0
-        print(f"{self.thread_name} Recording session completed with {total_chunks} chunk(s)")
+        print(f"{self.thread_name} Recording session completed")
     
     def _cleanup(self, cap):
         """Cleanup resources"""
@@ -214,7 +209,30 @@ class CameraWorker:
         self.video_recorder.stop_recording()
         cap.release()
         print(f"{self.thread_name} Done.")
-
+    
+    def _emit_video_motion_event(self, action, video_path, start_time, end_time=None):
+        """Emit video motion event with the specified format"""
+        if not self.websocket_server:
+            return
+            
+        event_data = {
+            "camera_id": self.camera_id,
+            "type": "VideoMotion",
+            "action": action,
+            "video_path": video_path,
+            "startTime": start_time
+        }
+        
+        if end_time is not None:
+            event_data["endTime"] = end_time
+        
+        try:
+            self.websocket_server.handle_motion_detection_event(
+                self.camera_id, video_path, action == "start", event_data
+            )
+        except Exception as e:
+            print(f"Error sending WebSocket video motion event: {e}")
+    
 
 class CameraManager:
     """Thread-safe camera management"""
