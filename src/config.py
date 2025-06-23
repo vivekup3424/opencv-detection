@@ -6,10 +6,10 @@ Configuration settings for the Motion Detection System
 import os
 
 # Motion detection parameters
-DEFAULT_THRESHOLD = 25
-DEFAULT_MIN_AREA = 500
-DEFAULT_MOTION_TIMEOUT = 2.0  # seconds to maintain motion state after last detection
-SKIP_FRAMES = 3  # Process every 3rd frame (better balance)
+DEFAULT_THRESHOLD = 20
+DEFAULT_MIN_AREA = 300  # Smaller minimum area to catch smaller movements
+DEFAULT_MOTION_TIMEOUT = 2
+SKIP_FRAMES = 2
 DEFAULT_POST_BUFFER_SECONDS = 3
 DEFAULT_FPS = 30 # Lower target FPS
 
@@ -22,12 +22,12 @@ CONNECTION_TIMEOUT = 10  # seconds to wait for initial connection
 BUFFER_SIZE = 1  # Smaller buffer to reduce memory
 MAX_INIT_FRAMES = 50
 INIT_FRAME_WAIT = 0.2
-MOTION_DETECT_RESOLUTION = (192, 144)  # Increased resolution for better accuracy
+MOTION_DETECT_RESOLUTION = (320, 240)
 GAUSSIAN_KERNEL = (11, 11)  # Same kernel size
 
 # Recording settings
 RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
-CLEANUP_DAYS = 3
+CLEANUP_DAYS = 7
 CHUNK_DURATION_SECONDS = 60  # 1 minute chunks
 
 # Performance settings
@@ -47,3 +47,8 @@ FFMPEG_FPS = 15
 FFMPEG_RESOLUTION = '1280x720'
 FFMPEG_AUDIO_BITRATE = '64k'
 FFMPEG_THREADS = 2
+
+# Debug and monitoring settings
+DEBUG_MOTION_DETECTION = True  # Enable detailed motion detection logging
+MOTION_DEBUG_INTERVAL = 10  # Print motion debug info every N seconds
+ENABLE_MOTION_VISUALIZATION = False  # Set to True for debugging (performance impact)
