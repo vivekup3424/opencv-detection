@@ -8,9 +8,10 @@ import os
 # Motion detection parameters
 DEFAULT_THRESHOLD = 25
 DEFAULT_MIN_AREA = 500
+DEFAULT_MOTION_TIMEOUT = 2.0  # seconds to maintain motion state after last detection
 SKIP_FRAMES = 3  # Process every 3rd frame (better balance)
 DEFAULT_POST_BUFFER_SECONDS = 3
-DEFAULT_FPS = 15  # Lower target FPS
+DEFAULT_FPS = 30 # Lower target FPS
 
 # RTSP Connection and Reconnection settings
 MAX_RECONNECT_ATTEMPTS = 5

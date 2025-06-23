@@ -7,21 +7,26 @@ import cv2
 import time
 from config import (
     MOTION_DETECT_RESOLUTION, GAUSSIAN_KERNEL, SKIP_FRAMES,
-    ADAPTIVE_SLEEP_NO_MOTION, ADAPTIVE_SLEEP_MOTION
+    ADAPTIVE_SLEEP_NO_MOTION, ADAPTIVE_SLEEP_MOTION, DEFAULT_MOTION_TIMEOUT
 )
 
 
 class MotionDetector:
     """Handles motion detection logic"""
     
-    def __init__(self, threshold=25, min_area=500):
+    def __init__(self, threshold=25, min_area=500, motion_timeout=DEFAULT_MOTION_TIMEOUT):
         self.threshold = threshold
         self.min_area = min_area
+        self.motion_timeout = motion_timeout  # Add timeout parameter
         self.frame_count = 0
         self.frames_processed_for_detection = 0
         self.previous_gray = None
         self.start_time = time.time()
         self.last_stats_time = time.time()
+        
+        # Add motion state tracking
+        self.motion_detected = False
+        self.last_motion_time = None
     
     def initialize_from_frame(self, frame):
         """Initialize motion detection with the first frame"""
@@ -39,7 +44,7 @@ class MotionDetector:
         
         # Only process every skip_frames frame for motion detection
         if self.frame_count % SKIP_FRAMES != 0:
-            return None  # Skip this frame
+            return self.motion_detected  # Return current state instead of None
         
         self.frames_processed_for_detection += 1
         
@@ -63,7 +68,26 @@ class MotionDetector:
         # Update previous frame
         self.previous_gray = current_gray
         
-        return motion_detected
+        # Update motion state with timeout logic
+        current_time = time.time()
+        if motion_detected:
+            if not self.motion_detected:
+                self.motion_detected = True
+            self.last_motion_time = current_time
+        elif self.motion_detected and self.last_motion_time and (current_time - self.last_motion_time >= self.motion_timeout):
+            self.motion_detected = False
+        
+        return self.motion_detected
+    
+    def get_motion_state_info(self):
+        """Get detailed motion state information"""
+        current_time = time.time()
+        return {
+            "motion_detected": self.motion_detected,
+            "last_motion_time": self.last_motion_time,
+            "time_since_motion": current_time - self.last_motion_time if self.last_motion_time else None,
+            "motion_timeout": self.motion_timeout
+        }
     
     def get_adaptive_sleep_duration(self, motion_detected):
         """Get sleep duration based on motion state"""
