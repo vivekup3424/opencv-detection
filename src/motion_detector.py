@@ -43,32 +43,30 @@ class MotionDetector:
         
         # Only process every skip_frames frame for motion detection
         if self.frame_count % SKIP_FRAMES != 0:
-            return None  # Skip processing, don't return cached state
+            # Return current state even when skipping frames
+            return self.motion_detected
         
         self.frames_processed_for_detection += 1
         
-        # Convert frame to grayscale and apply Gaussian blur (no resizing for better accuracy)
+        # Convert frame to grayscale and apply Gaussian blur
         current_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         current_gray = cv2.GaussianBlur(current_gray, GAUSSIAN_KERNEL, 0)
         
         # Calculate difference and threshold
-        diff = cv2.absdiff(self.previous_gray, current_gray)
-        thresh = cv2.threshold(diff, self.threshold, 255, cv2.THRESH_BINARY)[1]
+        frame_delta = cv2.absdiff(self.previous_gray, current_gray)
+        thresh = cv2.threshold(frame_delta, self.threshold, 255, cv2.THRESH_BINARY)[1]
         thresh = cv2.dilate(thresh, None, iterations=1)
         
-        # Find contours (use copy to avoid modifying original)
+        # Find contours
         contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Check for motion - use explicit loop like reference code
+        # Check for motion - simplified like reference code
         motion_this_frame = False
         for contour in contours:
             if cv2.contourArea(contour) < self.min_area:
                 continue
             motion_this_frame = True
             break
-        
-        # Update previous frame
-        self.previous_gray = current_gray
         
         # Update motion state with simpler logic like reference code
         current_time = time.time()
@@ -79,7 +77,71 @@ class MotionDetector:
         elif self.motion_detected and self.last_motion_time and (current_time - self.last_motion_time >= self.motion_timeout):
             self.motion_detected = False
         
+        # Update previous frame for next comparison
+        self.previous_gray = current_gray
+        
         return self.motion_detected
+    
+    def detect_motion_with_debug(self, frame):
+        """
+        Detect motion and return debug information including contours
+        Returns (motion_detected, debug_info)
+        """
+        self.frame_count += 1
+        
+        # Only process every skip_frames frame for motion detection
+        if self.frame_count % SKIP_FRAMES != 0:
+            return self.motion_detected, None
+        
+        self.frames_processed_for_detection += 1
+        
+        # Convert frame to grayscale and apply Gaussian blur
+        current_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        current_gray = cv2.GaussianBlur(current_gray, GAUSSIAN_KERNEL, 0)
+        
+        # Calculate difference and threshold
+        frame_delta = cv2.absdiff(self.previous_gray, current_gray)
+        thresh = cv2.threshold(frame_delta, self.threshold, 255, cv2.THRESH_BINARY)[1]
+        thresh = cv2.dilate(thresh, None, iterations=1)
+        
+        # Find contours
+        contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Check for motion and collect debug info
+        motion_this_frame = False
+        motion_contours = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < self.min_area:
+                continue
+            motion_this_frame = True
+            # Get bounding rectangle for debug info
+            x, y, w, h = cv2.boundingRect(contour)
+            motion_contours.append({
+                'area': area,
+                'bbox': (x, y, w, h)
+            })
+        
+        # Update motion state
+        current_time = time.time()
+        if motion_this_frame:
+            if not self.motion_detected:
+                self.motion_detected = True
+            self.last_motion_time = current_time
+        elif self.motion_detected and self.last_motion_time and (current_time - self.last_motion_time >= self.motion_timeout):
+            self.motion_detected = False
+        
+        # Update previous frame for next comparison
+        self.previous_gray = current_gray
+        
+        debug_info = {
+            'motion_this_frame': motion_this_frame,
+            'contours_found': len(contours),
+            'motion_contours': motion_contours,
+            'threshold_image': thresh
+        }
+        
+        return self.motion_detected, debug_info
     
     def get_motion_state_info(self):
         """Get detailed motion state information"""

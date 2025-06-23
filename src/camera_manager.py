@@ -302,6 +302,32 @@ class CameraWorker:
         self.video_recorder.stop_recording()
         cap.release()
         print(f"{self.thread_name} Done.")
+    
+    def _reset_state_for_reconnection(self):
+        """Reset motion and recording state for reconnection"""
+        print(f"{self.thread_name} Resetting state for reconnection...")
+        
+        # Stop any ongoing recording
+        if self.video_recorder.is_recording():
+            self.video_recorder.stop_recording()
+        
+        # Reset motion detection state
+        self.motion_detected = False
+        self.motion_start_time = None
+        self.last_motion_time = None
+        
+        # Reset recording state
+        self.chunk_start_time = None
+        self.chunk_counter = 0
+        self.current_chunk_filename = None
+        self.recording_dir = None
+        
+        # Reset motion detector internal state (will be re-initialized with first frame)
+        self.motion_detector.previous_gray = None
+        self.motion_detector.motion_detected = False
+        self.motion_detector.last_motion_time = None
+        
+        print(f"{self.thread_name} State reset completed")
 
 
 class CameraManager:
