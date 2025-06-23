@@ -12,6 +12,11 @@ SKIP_FRAMES = 3  # Process every 3rd frame (better balance)
 DEFAULT_POST_BUFFER_SECONDS = 3
 DEFAULT_FPS = 15  # Lower target FPS
 
+# RTSP Connection and Reconnection settings
+MAX_RECONNECT_ATTEMPTS = 5
+RECONNECT_DELAY = 5  # seconds between reconnection attempts
+CONNECTION_TIMEOUT = 10  # seconds to wait for initial connection
+
 # Video capture settings
 BUFFER_SIZE = 1  # Smaller buffer to reduce memory
 MAX_INIT_FRAMES = 50

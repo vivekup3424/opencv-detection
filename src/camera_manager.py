@@ -11,7 +11,8 @@ from video_recorder import VideoRecorder
 from utils import cleanup_old_recordings, create_recording_directory, generate_chunk_filename
 from config import (
     DEFAULT_THRESHOLD, DEFAULT_MIN_AREA, SKIP_FRAMES, DEFAULT_POST_BUFFER_SECONDS,
-    BUFFER_SIZE, MAX_INIT_FRAMES, INIT_FRAME_WAIT, DEFAULT_FPS, CHUNK_DURATION_SECONDS
+    BUFFER_SIZE, MAX_INIT_FRAMES, INIT_FRAME_WAIT, DEFAULT_FPS, CHUNK_DURATION_SECONDS,
+    MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY, CONNECTION_TIMEOUT
 )
 
 
@@ -41,63 +42,162 @@ class CameraWorker:
         self.chunk_counter = 0
         self.current_chunk_filename = None
         self.recording_dir = None
+        self.reconnect_count = 0
+    
+    def _connect_to_rtsp_with_retry(self, stop_event):
+        """Connect to RTSP stream with retry logic"""
+        attempt = 0
+        while attempt < MAX_RECONNECT_ATTEMPTS:
+            if stop_event and stop_event.is_set():
+                print(f"{self.thread_name} Connection cancelled by stop event")
+                return None
+            
+            attempt += 1
+            print(f"{self.thread_name} Connection attempt {attempt}/{MAX_RECONNECT_ATTEMPTS} to RTSP stream: {self.rtsp_url}")
+            
+            try:
+                cap = cv2.VideoCapture(self.rtsp_url)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, BUFFER_SIZE)
+                
+                # Wait for connection to establish
+                time.sleep(2)
+                
+                if cap.isOpened():
+                    # Test by trying to read a frame
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        print(f"{self.thread_name} Successfully connected to RTSP stream")
+                        self.reconnect_count = 0  # Reset reconnect counter on successful connection
+                        return cap
+                    else:
+                        print(f"{self.thread_name} Connection established but could not read frame")
+                        cap.release()
+                else:
+                    print(f"{self.thread_name} Failed to open RTSP stream")
+                    cap.release()
+                    
+            except Exception as e:
+                print(f"{self.thread_name} Connection error: {e}")
+            
+            if attempt < MAX_RECONNECT_ATTEMPTS:
+                print(f"{self.thread_name} Waiting {RECONNECT_DELAY} seconds before retry...")
+                time.sleep(RECONNECT_DELAY)
+        
+        print(f"{self.thread_name} Failed to connect after {MAX_RECONNECT_ATTEMPTS} attempts")
+        return None
+    
+    def _get_initial_frame_with_retry(self, cap):
+        """Get initial frame with retry logic"""
+        ret = None
+        frame1 = None
+        
+        for attempt in range(MAX_INIT_FRAMES):
+            ret, frame1 = cap.read()
+            if ret and frame1 is not None:
+                return ret, frame1
+            time.sleep(INIT_FRAME_WAIT)
+        
+        return ret, frame1
     
     def run(self, stop_event):
-        """Main camera worker loop"""
-        print(f"{self.thread_name} Connecting to RTSP stream: {self.rtsp_url}")
+        """Main camera worker loop with reconnection support"""
+        print(f"{self.thread_name} Starting camera worker...")
         
         # Setup recording directory and cleanup
         self.recording_dir = create_recording_directory(self.camera_id)
         cleanup_old_recordings(self.camera_id)
         
-        # Initialize capture
-        cap = cv2.VideoCapture(self.rtsp_url)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, BUFFER_SIZE)
-        time.sleep(2)
-        
-        if not cap.isOpened():
-            print(f"{self.thread_name} Error: Could not open RTSP stream")
-            return
-        
-        # Get initial frame
-        ret = None
-        for _ in range(MAX_INIT_FRAMES):
-            ret, frame1 = cap.read()
-            if ret:
+        while True:
+            if stop_event and stop_event.is_set():
+                print(f"{self.thread_name} Stopping camera worker...")
                 break
-            time.sleep(INIT_FRAME_WAIT)
-        
-        if not ret:
-            print(f"{self.thread_name} Error: Could not get initial frame")
-            cap.release()
-            return
-        
-        fps = cap.get(cv2.CAP_PROP_FPS) or DEFAULT_FPS
-        height, width, _ = frame1.shape
-        print(f"{self.thread_name} Initialized: {width}x{height} at {fps} FPS")
-        
-        # Initialize motion detector
-        self.motion_detector.initialize_from_frame(frame1)
-        
-        try:
-            self._main_loop(cap, stop_event)
-        except KeyboardInterrupt:
-            print(f"{self.thread_name} Interrupted by user")
-        except Exception as e:
-            print(f"{self.thread_name} Error: {e}")
-        finally:
-            self._cleanup(cap)
+            
+            # Connect to RTSP stream with retry logic
+            cap = self._connect_to_rtsp_with_retry(stop_event)
+            if cap is None:
+                print(f"{self.thread_name} Could not establish RTSP connection, exiting...")
+                break
+            
+            # Get initial frame
+            ret, frame1 = self._get_initial_frame_with_retry(cap)
+            if not ret or frame1 is None:
+                print(f"{self.thread_name} Could not get initial frame")
+                cap.release()
+                if self.reconnect_count < MAX_RECONNECT_ATTEMPTS:
+                    self.reconnect_count += 1
+                    print(f"{self.thread_name} Will retry connection ({self.reconnect_count}/{MAX_RECONNECT_ATTEMPTS})")
+                    time.sleep(RECONNECT_DELAY)
+                    continue
+                else:
+                    print(f"{self.thread_name} Maximum reconnection attempts reached, exiting...")
+                    break
+            
+            fps = cap.get(cv2.CAP_PROP_FPS) or DEFAULT_FPS
+            height, width, _ = frame1.shape
+            
+            if self.reconnect_count > 0:
+                print(f"{self.thread_name} Successfully reconnected after {self.reconnect_count} attempts")
+            
+            print(f"{self.thread_name} Initialized: {width}x{height} at {fps} FPS")
+            
+            # Initialize motion detector
+            self.motion_detector.initialize_from_frame(frame1)
+            
+            try:
+                # Run main processing loop
+                connection_lost = self._main_loop(cap, stop_event)
+                
+                if connection_lost and not (stop_event and stop_event.is_set()):
+                    print(f"{self.thread_name} Connection lost, attempting to reconnect...")
+                    self._reset_state_for_reconnection()
+                    self.reconnect_count += 1
+                    if self.reconnect_count >= MAX_RECONNECT_ATTEMPTS:
+                        print(f"{self.thread_name} Maximum reconnection attempts reached, exiting...")
+                        break
+                    time.sleep(RECONNECT_DELAY)
+                    continue
+                else:
+                    # Normal exit or stop requested
+                    break
+                    
+            except KeyboardInterrupt:
+                print(f"{self.thread_name} Interrupted by user")
+                break
+            except Exception as e:
+                print(f"{self.thread_name} Error: {e}")
+                self.reconnect_count += 1
+                if self.reconnect_count >= MAX_RECONNECT_ATTEMPTS:
+                    print(f"{self.thread_name} Maximum reconnection attempts reached, exiting...")
+                    break
+                time.sleep(RECONNECT_DELAY)
+                continue
+            finally:
+                self._cleanup(cap)
     
     def _main_loop(self, cap, stop_event):
         """Main processing loop"""
+        consecutive_failures = 0
+        max_consecutive_failures = 10
+        
         while True:
             if stop_event and stop_event.is_set():
                 print(f"{self.thread_name} Stopping camera thread...")
-                break
+                return False  # Normal exit, no reconnection needed
             
             ret, frame = cap.read()
             if not ret:
-                break
+                consecutive_failures += 1
+                print(f"{self.thread_name} Failed to read frame ({consecutive_failures}/{max_consecutive_failures})")
+                
+                if consecutive_failures >= max_consecutive_failures:
+                    print(f"{self.thread_name} Too many consecutive frame read failures, connection likely lost")
+                    return True  # Connection lost, need to reconnect
+                
+                time.sleep(0.5)  # Brief pause before retrying
+                continue
+            
+            # Reset failure counter on successful frame read
+            consecutive_failures = 0
             
             # Check if recording process is still running
             if self.motion_detected and self.video_recorder.is_recording():
@@ -120,6 +220,8 @@ class CameraWorker:
                 stats = self.motion_detector.get_performance_stats()
                 print(f"{self.thread_name} Performance: {stats['fps_actual']:.1f} FPS total, "
                       f"{stats['detection_fps']:.1f} detection FPS")
+        
+        return False  # Should not reach here normally
     
     def _handle_motion_detection(self, motion_this_frame):
         """Handle motion detection logic"""
