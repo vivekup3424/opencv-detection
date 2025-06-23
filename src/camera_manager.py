@@ -176,8 +176,6 @@ class CameraWorker:
     
     def _main_loop(self, cap, stop_event):
         """Main processing loop"""
-        consecutive_failures = 0
-        max_consecutive_failures = 10
         
         while True:
             if stop_event and stop_event.is_set():
@@ -186,19 +184,7 @@ class CameraWorker:
             
             ret, frame = cap.read()
             if not ret:
-                consecutive_failures += 1
-                print(f"{self.thread_name} Failed to read frame ({consecutive_failures}/{max_consecutive_failures})")
-                
-                if consecutive_failures >= max_consecutive_failures:
-                    print(f"{self.thread_name} Too many consecutive frame read failures, connection likely lost")
-                    return True  # Connection lost, need to reconnect
-                
-                time.sleep(0.5)  # Brief pause before retrying
-                continue
-            
-            # Reset failure counter on successful frame read
-            consecutive_failures = 0
-            
+                return True 
             # Check if recording process is still running
             if self.motion_detected and self.video_recorder.is_recording():
                 if not self.video_recorder.is_process_alive():
