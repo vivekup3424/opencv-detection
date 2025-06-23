@@ -32,13 +32,6 @@ def cleanup_old_recordings(camera_id):
 
 def create_recording_directory(camera_id):
     """Create recording directory for today's date"""
-    today = datetime.datetime.now().strftime('%Y-%m-%d')
-    recording_dir = Path(RECORDINGS_DIR) / camera_id / today
+    recording_dir = Path(RECORDINGS_DIR) / camera_id
     recording_dir.mkdir(parents=True, exist_ok=True)
     return recording_dir
-
-
-def generate_chunk_filename(recording_dir, camera_id, chunk_counter):
-    """Generate filename for a recording chunk"""
-    timestamp = datetime.datetime.now().strftime('%H%M%S')
-    return recording_dir / f"{camera_id}_{timestamp}_chunk{chunk_counter:03d}.mp4"

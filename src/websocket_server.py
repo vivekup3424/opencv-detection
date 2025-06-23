@@ -160,15 +160,18 @@ class MotionDetectionWebSocketServer:
         
         print("WebSocket server stopped")
     
-    def handle_motion_detection_event(self, camera_id, video_path, motion_detected):
-        """Handle motion detection events and send updates to WebSocket clients"""
+    def handle_motion_detection_event(self, camera_id, video_path, action, start_time, end_time=None):
+        """Handle motion detection events and send updates to WebSocket clients in new format"""
         event_data = {
-            "type": "motion_detection",
             "camera_id": camera_id,
+            "type": "VideoMotion",
+            "action": action,
             "video_path": video_path,
-            "motion_detected": motion_detected,
-            "timestamp": datetime.datetime.now().isoformat()
+            "startTime": start_time
         }
+        
+        if end_time is not None:
+            event_data["endTime"] = end_time
         
         print(f"Motion detection event: {event_data}")
         

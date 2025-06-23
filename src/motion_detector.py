@@ -6,19 +6,20 @@ Motion detection functionality
 import cv2
 import time
 from config import (
-    MOTION_DETECT_RESOLUTION, GAUSSIAN_KERNEL, SKIP_FRAMES,
-    ADAPTIVE_SLEEP_NO_MOTION, ADAPTIVE_SLEEP_MOTION, DEFAULT_MOTION_TIMEOUT
+    DEFAULT_THRESHOLD, DEFAULT_MIN_AREA, GAUSSIAN_KERNEL, SKIP_FRAMES,
+    ADAPTIVE_SLEEP_NO_MOTION, ADAPTIVE_SLEEP_MOTION, DEFAULT_POST_BUFFER_SECONDS,
+    MOTION_DETECT_RESOLUTION
 )
 
 
 class MotionDetector:
     """Handles motion detection logic"""
 
-    def __init__(self, rtsp_url, threshold=25, min_area=500, motion_timeout=DEFAULT_MOTION_TIMEOUT):
+    def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
-        self.threshold = threshold
-        self.min_area = min_area
-        self.motion_timeout = motion_timeout  # Add timeout parameter
+        self.threshold = DEFAULT_THRESHOLD
+        self.min_area = DEFAULT_MIN_AREA
+        self.motion_timeout = DEFAULT_POST_BUFFER_SECONDS
         self.frame_skip = SKIP_FRAMES
         self.frame_count = 0
         self.frames_processed_for_detection = 0
