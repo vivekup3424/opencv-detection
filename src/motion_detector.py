@@ -14,12 +14,11 @@ from config import (
 class MotionDetector:
     """Handles motion detection logic"""
     
-    def __init__(self, threshold=30, min_area=800):
+    def __init__(self, threshold=25, min_area=500):
         self.threshold = threshold
         self.min_area = min_area
         self.frame_count = 0
         self.frames_processed_for_detection = 0
-        self.consecutive_no_motion_frames = 0
         self.previous_gray = None
         self.start_time = time.time()
         self.last_stats_time = time.time()
@@ -61,24 +60,17 @@ class MotionDetector:
         # Check for motion
         motion_detected = any(cv2.contourArea(c) >= self.min_area for c in contours)
         
-        if motion_detected:
-            self.consecutive_no_motion_frames = 0
-        else:
-            self.consecutive_no_motion_frames += 1
-        
         # Update previous frame
         self.previous_gray = current_gray
         
         return motion_detected
     
     def get_adaptive_sleep_duration(self, motion_detected):
-        """Get adaptive sleep duration based on motion state"""
+        """Get sleep duration based on motion state"""
         if motion_detected:
             return ADAPTIVE_SLEEP_MOTION
         else:
-            # Sleep longer if no motion for extended period
-            multiplier = 3 if self.consecutive_no_motion_frames > 50 else 1
-            return ADAPTIVE_SLEEP_NO_MOTION * multiplier
+            return ADAPTIVE_SLEEP_NO_MOTION
     
     def get_performance_stats(self):
         """Get current performance statistics"""

@@ -6,9 +6,9 @@ Configuration settings for the Motion Detection System
 import os
 
 # Motion detection parameters
-DEFAULT_THRESHOLD = 30
-DEFAULT_MIN_AREA = 800
-SKIP_FRAMES = 10  # Process every 10th frame
+DEFAULT_THRESHOLD = 25
+DEFAULT_MIN_AREA = 500
+SKIP_FRAMES = 3  # Process every 3rd frame (better balance)
 DEFAULT_POST_BUFFER_SECONDS = 3
 DEFAULT_FPS = 15  # Lower target FPS
 
@@ -16,8 +16,8 @@ DEFAULT_FPS = 15  # Lower target FPS
 BUFFER_SIZE = 1  # Smaller buffer to reduce memory
 MAX_INIT_FRAMES = 50
 INIT_FRAME_WAIT = 0.2
-MOTION_DETECT_RESOLUTION = (128, 96)  # Even smaller resolution
-GAUSSIAN_KERNEL = (11, 11)  # Smaller kernel
+MOTION_DETECT_RESOLUTION = (192, 144)  # Increased resolution for better accuracy
+GAUSSIAN_KERNEL = (11, 11)  # Same kernel size
 
 # Recording settings
 RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
