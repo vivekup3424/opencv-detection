@@ -43,14 +43,9 @@ class VideoRecorder:
     def stop_recording(self):
         """Stop the current recording process"""
         if self.recording_process:
-            try:
-                self.recording_process.terminate()
-                self.recording_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.recording_process.kill()
-                self.recording_process.wait()
-            finally:
-                self.recording_process = None
+            self.recording_process.terminate()
+            self.recording_process.wait()
+            self.recording_process = None
     
     def is_recording(self):
         """Check if currently recording"""
